@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lock In — 4 Hour Focus Timer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0d14; --bg2:#121626; --fg:#e8eaf2; --dim:#7d84a0; --faint:#2a3047;
+    --accent:#8b7cf6; --accent2:#4fd1c5; --warn:#f6ad55;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:radial-gradient(ellipse at 50% 30%, #1a1f38 0%, var(--bg) 65%);
+    color:var(--fg); font-family:Inter,system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100vh; overflow:hidden; user-select:none;
+  }
+  .stars{position:fixed;inset:0;pointer-events:none;opacity:.5}
+  .wrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:3.5vh;width:100%;padding:2rem}
+  .ringbox{position:relative;width:min(78vh,88vw);aspect-ratio:1}
+  svg.ring{width:100%;height:100%;transform:rotate(-90deg)}
+  .track{fill:none;stroke:var(--faint);stroke-width:6}
+  .prog{fill:none;stroke:url(#g);stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset 1s linear}
+  .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.5vh}
+  .time{font-family:"JetBrains Mono",monospace;font-weight:300;font-size:min(13vh,15vw);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .status{font-size:min(2.2vh,3.4vw);letter-spacing:.25em;text-transform:uppercase;color:var(--dim)}
+  .status.idle{color:var(--warn)}
+  .status.run{color:var(--accent2)}
+  .focused{font-family:"JetBrains Mono",monospace;font-size:min(1.9vh,3vw);color:var(--dim)}
+  .msg{font-size:min(2.8vh,4.4vw);color:#c9cdf0;text-align:center;max-width:44rem;min-height:2em;line-height:1.4;transition:opacity .8s}
+  .controls{display:flex;gap:.8rem;flex-wrap:wrap;justify-content:center}
+  button{
+    font:500 .95rem Inter,sans-serif;color:var(--fg);background:var(--bg2);
+    border:1px solid var(--faint);border-radius:999px;padding:.7rem 1.4rem;cursor:pointer;transition:all .2s
+  }
+  button:hover{border-color:var(--accent);background:#1a1f38}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#0b0d14;font-weight:600}
+  button.primary:hover{filter:brightness(1.1)}
+  .settings{display:flex;gap:1.4rem;flex-wrap:wrap;justify-content:center;color:var(--dim);font-size:.85rem;align-items:center}
+  .settings label{display:flex;gap:.5rem;align-items:center}
+  .settings input{width:4.2rem;background:var(--bg2);color:var(--fg);border:1px solid var(--faint);border-radius:8px;padding:.35rem .5rem;font:inherit;text-align:center}
+  .note{font-size:.78rem;color:var(--dim);text-align:center;max-width:40rem;line-height:1.5}
+  .note b{color:var(--fg);font-weight:500}
+  .hide-ui .controls,.hide-ui .settings,.hide-ui .note{opacity:0;transition:opacity .6s}
+  .hide-ui:hover .controls,.hide-ui:hover .settings,.hide-ui:hover .note{opacity:1}
+  .done .time{color:var(--accent2)}
+</style>
+</head>
+<body>
+<canvas class="stars" id="stars"></canvas>
+<div class="wrap" id="wrap">
+  <div class="ringbox">
+    <svg class="ring" viewBox="0 0 200 200">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#8b7cf6"/><stop offset="100%" stop-color="#4fd1c5"/>
+      </linearGradient></defs>
+      <circle class="track" cx="100" cy="100" r="92"/>
+      <circle class="prog" id="prog" cx="100" cy="100" r="92"/>
+    </svg>
+    <div class="center">
+      <div class="status" id="status">Ready</div>
+      <div class="time" id="time">4:00:00</div>
+      <div class="focused" id="focused">0m locked in</div>
+    </div>
+  </div>
+
+  <div class="msg" id="msg">Put the music on. Let's build something tonight.</div>
+
+  <div class="controls">
+    <button class="primary" id="startBtn">Start</button>
+    <button id="resetBtn">Reset</button>
+    <button id="pipBtn">Pop out (always on top)</button>
+    <button id="fsBtn">Fullscreen</button>
+  </div>
+
+  <div class="settings">
+    <label>Hours <input type="number" id="hours" min="0.25" max="12" step="0.25" value="4"></label>
+    <label>Auto-pause after <input type="number" id="idleMin" min="1" max="30" step="1" value="3"> min idle</label>
+    <label><input type="checkbox" id="chime" checked style="width:auto"> Chime</label>
+  </div>
+
+  <div class="note" id="note">Auto-pause watches your <b>whole Mac</b> (keyboard &amp; mouse in any app). Use Chrome or Edge, and click <b>Allow</b> when asked. Pressing <b>Start</b> pops the timer into a floating window that stays on top of every app. Keep this tab open (minimizing Chrome is fine; closing this tab closes the timer). <b>Space</b> to start/pause.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id) || (pipWin && pipWin.document.getElementById(id));
+const R = 92, C = 2 * Math.PI * R;
+$('prog').style.strokeDasharray = C;
+
+const messages = [
+  "Put the music on. Let's build something tonight.",
+  "Hour one. The hardest part was starting, and you already did.",
+  "Small commits, steady progress. You're in the zone.",
+  "Halfway there. Stretch, sip some water, keep going.",
+  "The bug is scared of you. Keep pushing.",
+  "Hour three. Most people quit before now. You didn't.",
+  "Late-night clarity is real. Use it.",
+  "Final stretch. Finish strong, ship something.",
+  "Every line you write tonight is future-you saying thanks."
+];
+
+let total = 4 * 3600 * 1000;
+let elapsed = 0;          // focused ms
+let lastTick = null;
+let running = false;      // user wants it running
+let idle = false;         // system idle
+let finished = false;
+let idleDetector = null, idleAbort = null;
+let lastMsgIdx = -1, timer = null, uiTimer = null, pipToggleBtn = null;
+
+function fmt(ms){
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function fmtFocused(ms){
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60);
+  return (h ? `${h}h ${m % 60}m` : `${m}m`) + ' locked in';
+}
+
+function setMsg(i){
+  if (i === lastMsgIdx) return;
+  lastMsgIdx = i;
+  const el = $('msg');
+  el.style.opacity = 0;
+  setTimeout(() => { el.textContent = messages[i]; el.style.opacity = 1; }, 600);
+}
+
+function render(){
+  const left = total - elapsed;
+  $('time').textContent = fmt(left);
+  $('focused').textContent = fmtFocused(elapsed);
+  $('prog').style.strokeDashoffset = C * (1 - Math.min(1, elapsed / total));
+  document.title = finished ? 'Done! — Lock In' : `${fmt(left)} — Lock In`;
+  const st = $('status');
+  st.className = 'status';
+  if (finished) { st.textContent = 'Session complete'; }
+  else if (running && idle) { st.textContent = 'Paused — you stepped away'; st.classList.add('idle'); }
+  else if (running) { st.textContent = 'Locked in'; st.classList.add('run'); }
+  else { st.textContent = elapsed ? 'Paused' : 'Ready'; }
+  const label = running ? 'Pause' : (elapsed && !finished ? 'Resume' : 'Start');
+  $('startBtn').textContent = label;
+  if (pipToggleBtn) pipToggleBtn.textContent = label;
+  // message every ~30 min of focus
+  if (!finished && elapsed > 0) setMsg(Math.min(messages.length - 2, Math.floor(elapsed / (30 * 60000))) + 1);
+}
+
+function tick(){
+  const now = performance.now();
+  if (running && !idle && lastTick !== null) elapsed += now - lastTick;
+  lastTick = now;
+  if (elapsed >= total && !finished) {
+    elapsed = total; finished = true; running = false;
+    stopIdle();
+    $('msg').textContent = "Four hours. You showed up and did the work. Proud of you — go rest.";
+    document.body.classList.add('done');
+    if ($('chime').checked) chime();
+  }
+  render();
+}
+
+async function startIdle(){
+  const note = $('note');
+  if (!('IdleDetector' in window)) {
+    note.innerHTML = "Auto-pause isn't available in this browser or view. Open this page in <b>Chrome or Edge</b> on your Mac (best: the downloaded .html file). The timer still works — press <b>Space</b> to pause.";
+    return;
+  }
+  try {
+    let perm;
+    try { perm = await IdleDetector.requestPermission(); } catch (e) { perm = 'needs-click'; }
+    if (perm !== 'granted') {
+      note.innerHTML = "Auto-pause needs your OK once. <button id='idleBtn'>Turn on auto-pause</button>";
+      $('idleBtn').onclick = () => { if (running) startIdle(); };
+      return;
+    }
+    idleAbort = new AbortController();
+    idleDetector = new IdleDetector();
+    idleDetector.addEventListener('change', () => {
+      tick(); // bank time up to now
+      const nowIdle = idleDetector.userState === 'idle' || idleDetector.screenState === 'locked';
+      idle = nowIdle;
+      render();
+    });
+    const mins = Math.max(1, parseInt($('idleMin').value) || 3);
+    await idleDetector.start({ threshold: mins * 60000, signal: idleAbort.signal });
+    note.innerHTML = `Auto-pause is <b>on</b>: pauses after ${mins} min with no keyboard or mouse activity anywhere on your Mac, and resumes when you're back. <b>Space</b> to pause manually.`;
+  } catch (e) {
+    idleAbort = null; idleDetector = null;
+    note.innerHTML = "Auto-pause couldn't start (" + (e && (e.name + ': ' + e.message)) + "). The timer is still running — use Pause when you step away. <button id='idleBtn'>Try auto-pause again</button>";
+    $('idleBtn').onclick = () => { if (running) startIdle(); };
+  }
+}
+function stopIdle(){ if (idleAbort) idleAbort.abort(); idleAbort = null; idleDetector = null; idle = false; }
+
+function chime(){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      const t = ctx.currentTime + i * 0.35;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+      o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + 2.3);
+    });
+  } catch (e) {}
+}
+
+function toggle(){
+  if (finished) return;
+  if (running) { tick(); running = false; stopIdle(); }
+  else {
+    if (!elapsed) total = Math.max(0.25, parseFloat($('hours').value) || 4) * 3600000;
+    running = true; lastTick = performance.now();
+    if (!pipWin && 'documentPictureInPicture' in window) openPip(); // pop out on Start
+    startIdle();
+    document.getElementById('wrap').classList.add('hide-ui');
+  }
+  render();
+}
+
+$('startBtn').onclick = toggle;
+$('resetBtn').onclick = () => {
+  running = false; finished = false; elapsed = 0; stopIdle(); lastMsgIdx = -1;
+  total = Math.max(0.25, parseFloat($('hours').value) || 4) * 3600000;
+  document.body.classList.remove('done');
+  $('wrap').classList.remove('hide-ui');
+  $('msg').textContent = messages[0];
+  render();
+};
+$('hours').onchange = () => { if (!running && !elapsed) { total = Math.max(0.25, parseFloat($('hours').value) || 4) * 3600000; render(); } };
+$('fsBtn').onclick = async () => {
+  try { document.fullscreenElement ? await document.exitFullscreen() : await document.documentElement.requestFullscreen(); } catch (e) {}
+};
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); toggle(); }
+});
+
+let mainInterval = setInterval(tick, 500);
+render();
+
+// ---- Floating always-on-top window (Chrome/Edge Document Picture-in-Picture) ----
+let pipWin = null;
+$('pipBtn').onclick = () => { if (pipWin) pipWin.close(); else openPip(); };
+async function openPip(){
+  if (pipWin) return;
+  if (!('documentPictureInPicture' in window)) {
+    $('note').innerHTML = "Pop-out needs <b>Chrome or Edge</b> (version 116+), opened from the downloaded .html file.";
+    return;
+  }
+  try {
+    pipWin = await documentPictureInPicture.requestWindow({ width: 460, height: 520 });
+  } catch (e) {
+    $('note').innerHTML = "Pop-out is blocked in this view. Open the downloaded <b>.html file in Chrome or Edge</b> to use it.";
+    pipWin = null; return;
+  }
+  // copy fonts + styles
+  document.querySelectorAll('link[rel=stylesheet], style').forEach(n => pipWin.document.head.appendChild(n.cloneNode(true)));
+  const pb = pipWin.document.body;
+  pb.style.cssText = 'gap:2vh;padding:4vh 4vw;justify-content:center';
+  const ring = document.querySelector('.ringbox'), msg = $('msg');
+  const ringHome = ring.parentNode, msgNext = msg.nextSibling;
+  ring.style.width = 'min(80vh,92vw)';
+  msg.style.fontSize = 'min(4vh,5vw)';
+  pb.append(ring, msg);
+  // controls inside the floating window
+  const bar = pipWin.document.createElement('div');
+  bar.className = 'controls';
+  const pBtn = pipWin.document.createElement('button');
+  pBtn.className = 'primary'; pBtn.id = 'pipToggle';
+  pBtn.onclick = toggle;
+  const rBtn = pipWin.document.createElement('button');
+  rBtn.textContent = 'Reset';
+  rBtn.onclick = () => $('resetBtn').click();
+  bar.append(pBtn, rBtn);
+  pb.append(bar);
+  pipToggleBtn = pBtn;
+  render();
+  // Space toggles from the floating window too
+  pipWin.document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); toggle(); } });
+  // tick from the visible floating window so Chrome never throttles it
+  clearInterval(mainInterval);
+  const pipInterval = pipWin.setInterval(tick, 500);
+  $('pipBtn').textContent = 'Bring back';
+  pipWin.addEventListener('pagehide', () => {
+    ring.style.width = ''; msg.style.fontSize = '';
+    ringHome.insertBefore(ring, ringHome.firstChild);
+    ringHome.insertBefore(msg, msgNext);
+    mainInterval = setInterval(tick, 500);
+    pipWin = null; pipToggleBtn = null;
+    $('pipBtn').textContent = 'Pop out (always on top)';
+  });
+}
+
+// gentle starfield
+(function(){
+  const c = $('stars'), x = c.getContext('2d');
+  let stars = [];
+  function size(){
+    c.width = innerWidth; c.height = innerHeight;
+    stars = Array.from({length: 120}, () => ({ x: Math.random()*c.width, y: Math.random()*c.height, r: Math.random()*1.2+.2, p: Math.random()*6.28, s: Math.random()*.01+.003 }));
+  }
+  function draw(){
+    x.clearRect(0,0,c.width,c.height);
+    for (const s of stars){ s.p += s.s; x.globalAlpha = .3 + .5*Math.abs(Math.sin(s.p)); x.fillStyle = '#c9cdf0'; x.beginPath(); x.arc(s.x,s.y,s.r,0,6.28); x.fill(); }
+    requestAnimationFrame(draw);
+  }
+  addEventListener('resize', size); size(); draw();
+})();
+</script>
+</body>
+</html>
